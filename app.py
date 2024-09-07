@@ -105,7 +105,7 @@ def main():
     )
 
     # --- Header ---
-    st.markdown("""<h1 style="text-align: center; color: #6ca395;">☁️ <i>{{lemmebuild}} chat</h1>""", unsafe_allow_html=True)
+    st.markdown("""<h1 style="text-align: center; color: #6ca395;">☁️ <i>{{Upsurge}} chat</h1>""", unsafe_allow_html=True)
 
     # User authentication
     username = st.text_input("Enter your username:")
