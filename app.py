@@ -1,14 +1,18 @@
 import streamlit as st
+import dotenv
 import os
 from PIL import Image
 import base64
 from io import BytesIO
+import random
 import anthropic
 import json
 import hashlib
 
-# Set the API key directly in the file or preferably in Streamlit secrets
-ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
+dotenv.load_dotenv()
+
+# Set the API key directly in the file
+ANTHROPIC_API_KEY= st.secrets["ANTHROPIC_API_KEY"] # Replace with your actual API key
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
@@ -66,20 +70,33 @@ def get_image_base64(image_raw):
     img_byte = buffered.getvalue()
     return base64.b64encode(img_byte).decode('utf-8')
 
+def file_to_base64(file):
+    with open(file, "rb") as f:
+        return base64.b64encode(f.read())
+
+def base64_to_image(base64_string):
+    base64_string = base64_string.split(",")[1]
+    return Image.open(BytesIO(base64.b64decode(base64_string)))
+
 def generate_user_id(username):
     return hashlib.md5(username.encode()).hexdigest()
 
-# New function to load user sessions using Streamlit secrets
+# New function to load user sessions
 def load_user_sessions(user_id):
-    sessions_json = st.secrets.get(f"user_{user_id}", "{}")
-    return json.loads(sessions_json)
+    filename = f"user_{user_id}_sessions.json"
+    if os.path.exists(filename):
+        with open(filename, "r") as f:
+            return json.load(f)
+    return {'default': []}
 
-# New function to save user sessions using Streamlit secrets
+# New function to save user sessions
 def save_user_sessions(user_id, sessions):
-    sessions_json = json.dumps(sessions)
-    st.secrets[f"user_{user_id}"] = sessions_json
+    filename = f"user_{user_id}_sessions.json"
+    with open(filename, "w") as f:
+        json.dump(sessions, f)
 
 def main():
+    # --- Page Config ---
     st.set_page_config(
         page_title="lb-chat",
         page_icon="☁️",
@@ -87,47 +104,43 @@ def main():
         initial_sidebar_state="expanded",
     )
 
+    # --- Header ---
     st.markdown("""<h1 style="text-align: center; color: #6ca395;">☁️ <i>{{lemmebuild}} chat</h1>""", unsafe_allow_html=True)
 
+    # User authentication
     username = st.text_input("Enter your username:")
     if username:
         user_id = generate_user_id(username)
         
+        # Initialize session state for managing multiple chat sessions
         if 'sessions' not in st.session_state:
             st.session_state.sessions = load_user_sessions(user_id)
         if 'current_session' not in st.session_state:
             st.session_state.current_session = 'default'
 
+        # --- Side Bar ---
         with st.sidebar:
+            # Session management
             st.subheader("Session Management")
+            session_options = list(st.session_state.sessions.keys())
+            selected_session = st.selectbox("Select a session:", session_options, index=session_options.index(st.session_state.current_session))
             
-            for session_name in st.session_state.sessions.keys():
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    st.write(f"• {session_name}")
-                with col2:
-                    if st.button("Select", key=f"select_{session_name}", use_container_width=True):
-                        st.session_state.current_session = session_name
-                        st.rerun()
-                with col3:
-                    if st.button("Rename", key=f"rename_{session_name}", use_container_width=True):
-                        new_name = st.text_input(f"New name for {session_name}:", key=f"new_name_{session_name}")
-                        if new_name and new_name != session_name:
-                            st.session_state.sessions[new_name] = st.session_state.sessions.pop(session_name)
-                            if st.session_state.current_session == session_name:
-                                st.session_state.current_session = new_name
-                            save_user_sessions(user_id, st.session_state.sessions)
-                            st.rerun()
+            if selected_session != st.session_state.current_session:
+                st.session_state.current_session = selected_session
+                st.rerun()
 
-            if st.button("Create New Session", use_container_width=True):
+            if st.button("Create New Session"):
                 new_session_id = f"Session_{len(st.session_state.sessions) + 1}"
                 st.session_state.sessions[new_session_id] = []
                 st.session_state.current_session = new_session_id
                 save_user_sessions(user_id, st.session_state.sessions)
                 st.rerun()
 
+        # --- Main Content ---
+        # Use the current session's messages
         messages = st.session_state.sessions[st.session_state.current_session]
 
+        # Displaying the previous messages if there are any
         for message in messages:
             with st.chat_message(message["role"]):
                 for content in message["content"]:
@@ -136,21 +149,30 @@ def main():
                     elif content["type"] == "image_url":      
                         st.image(content["image_url"]["url"])
 
+        # Side bar model options and inputs
         with st.sidebar:
             st.divider()
             
-            model = anthropic_models[0]
-            model_params = {"model": model}
+            model = anthropic_models[0]  # Use the first model by default
+            model_type = "anthropic"
+
+            model_params = {
+                "model": model,
+            }
 
             def reset_conversation():
                 st.session_state.sessions[st.session_state.current_session] = []
                 save_user_sessions(user_id, st.session_state.sessions)
                 st.rerun()
 
-            st.button("🗑️ Reset conversation", on_click=reset_conversation, use_container_width=True)
+            st.button(
+                "🗑️ Reset conversation", 
+                on_click=reset_conversation,
+            )
 
             st.divider()
 
+            # Image Upload
             st.write("### **🖼️ Add an image:**")
 
             def add_image_to_messages():
@@ -192,6 +214,7 @@ def main():
                             on_change=add_image_to_messages,
                         )
 
+        # Chat input
         if prompt := st.chat_input("Hi! Ask me anything..."):
             st.session_state.sessions[st.session_state.current_session].append(
                 {
@@ -204,9 +227,11 @@ def main():
             )
             save_user_sessions(user_id, st.session_state.sessions)
                 
+            # Display the new user message
             with st.chat_message("user"):
                 st.markdown(prompt)
 
+            # Display the assistant's response
             with st.chat_message("assistant"):
                 response_placeholder = st.empty()
                 full_response = ""
@@ -218,6 +243,7 @@ def main():
                     response_placeholder.markdown(full_response + "▌")
                 response_placeholder.markdown(full_response)
 
+            # Add the assistant's response to the current session
             st.session_state.sessions[st.session_state.current_session].append(
                 {
                     "role": "assistant",
