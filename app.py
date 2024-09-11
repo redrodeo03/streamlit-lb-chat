@@ -1,24 +1,126 @@
+import sys
 import streamlit as st
-import dotenv
 import os
 from PIL import Image
 import base64
 from io import BytesIO
-import random
 import anthropic
-import json
 import hashlib
+import dotenv
+from google.oauth2 import id_token
+from google.auth import jwt
+import time
+from google.auth.transport import requests
+from google_auth_oauthlib.flow import Flow
+import logging
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
+import json
 
+logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv()
 
-# Set the API key directly in the file
-ANTHROPIC_API_KEY= st.secrets["ANTHROPIC_API_KEY"] # Replace with your actual API key
+# Firebase initialization
+if not firebase_admin._apps:
+    firebase_creds = json.loads(st.secrets["FIREBASE_CREDENTIALS"])
+    cred = credentials.Certificate(firebase_creds)
+    firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# Set the API key directly in the file (consider using environment variables in production)
+ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
+GOOGLE_CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
+GOOGLE_CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
+
+
+# Determine the base URL dynamically
+if st.runtime.exists():
+    # We're running in Streamlit Cloud
+    base_url = st.runtime.get_instance().get_base_url()
+else:
+    # We're running locally
+    base_url = "http://localhost:8501"
+
+REDIRECT_URI = f"{base_url}/callback"
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
 ]
 
-# Function to convert the messages format from OpenAI and Streamlit to Anthropic
+# Configure Google OAuth flow
+flow = Flow.from_client_config(
+    {
+        "web": {
+            "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+            "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    },
+    scopes=["openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile"],
+    redirect_uri=REDIRECT_URI,
+)
+
+def verify_google_token(token):
+    try:
+        request = requests.Request()
+        clock_skew_in_seconds = 300
+        idinfo = id_token.verify_oauth2_token(
+            token, 
+            request, 
+            os.environ.get('GOOGLE_CLIENT_ID'),
+            clock_skew_in_seconds=clock_skew_in_seconds
+        )
+        if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+            raise ValueError('Wrong issuer.')
+        logging.info(f"Token verification successful. ID info: {idinfo}")
+        if 'email' not in idinfo:
+            logging.error("Email not found in ID token.")
+            return None
+        return idinfo
+    except ValueError as e:
+        logging.error(f"Token verification failed: {str(e)}")
+        return None
+
+def is_valid_email(email):
+    logging.info(f"Validating email: {email}")
+    is_valid = email.lower().endswith("@upsurge.io")
+    logging.info(f"Is email valid: {is_valid}")
+    return is_valid
+
+def login():
+    if 'google_token' not in st.session_state:
+        auth_url, _ = flow.authorization_url(prompt="consent")
+        
+        # Create a Google login button
+        st.markdown(
+            f"""
+            <br>
+            <a href="{auth_url}" target="_self">
+                <div style="
+                    display: centre-align;
+                    background-color: #6CA394;
+                    color: white;
+                    padding: 10px 20px;
+                    border-radius: 5px;
+                    text-decoration: none;
+                    font-weight: bold;
+                    text-align: center;
+                    transition: background-color 0.3s;
+                ">
+                    <img src="https://cdn1.iconfinder.com/data/icons/google-s-logo/150/Google_Icons-09-512.png" 
+                         style="vertical-align: middle; height: 24px; margin-right: 10px;" style="text-decoration:none;">
+                    Sign in with Google
+                </div>
+            </a>
+            """,
+            unsafe_allow_html=True
+        )
+        return False
+
 def messages_to_anthropic(messages):
     anthropic_messages = []
     prev_role = None
@@ -51,7 +153,6 @@ def messages_to_anthropic(messages):
         
     return anthropic_messages
 
-# Function to query and stream the response from the LLM
 def stream_llm_response(model_params, messages):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     with client.messages.stream(
@@ -63,37 +164,28 @@ def stream_llm_response(model_params, messages):
             for text in stream.text_stream:
                 yield text
 
-# Function to convert file to base64
 def get_image_base64(image_raw):
     buffered = BytesIO()
     image_raw.save(buffered, format=image_raw.format)
     img_byte = buffered.getvalue()
     return base64.b64encode(img_byte).decode('utf-8')
 
-def file_to_base64(file):
-    with open(file, "rb") as f:
-        return base64.b64encode(f.read())
+def generate_user_id(email):
+    return hashlib.md5(email.encode()).hexdigest()
 
-def base64_to_image(base64_string):
-    base64_string = base64_string.split(",")[1]
-    return Image.open(BytesIO(base64.b64decode(base64_string)))
-
-def generate_user_id(username):
-    return hashlib.md5(username.encode()).hexdigest()
-
-# New function to load user sessions
+# Load user sessions from Firebase
 def load_user_sessions(user_id):
-    filename = f"user_{user_id}_sessions.json"
-    if os.path.exists(filename):
-        with open(filename, "r") as f:
-            return json.load(f)
-    return {'default': []}
+    sessions = {}
+    docs = db.collection('users').document(user_id).collection('sessions').stream()
+    for doc in docs:
+        sessions[doc.id] = doc.to_dict().get('messages', [])
+    return sessions if sessions else {'default': []}
 
-# New function to save user sessions
+# Save user sessions to Firebase
 def save_user_sessions(user_id, sessions):
-    filename = f"user_{user_id}_sessions.json"
-    with open(filename, "w") as f:
-        json.dump(sessions, f)
+    user_ref = db.collection('users').document(user_id)
+    for session_name, messages in sessions.items():
+        user_ref.collection('sessions').document(session_name).set({'messages': messages})
 
 def main():
     # --- Page Config ---
@@ -105,12 +197,20 @@ def main():
     )
 
     # --- Header ---
-    st.markdown("""<h1 style="text-align: center; color: #6ca395;">☁️ <i>{{Upsurge}} chat</h1>""", unsafe_allow_html=True)
+    st.markdown("""<h1 style="text-align: center; color: #6ca395;">☁️ <i>{{lemmebuild}} chat</h1>""", unsafe_allow_html=True)
 
-    # User authentication
-    username = st.text_input("Enter your username:")
-    if username:
-        user_id = generate_user_id(username)
+    # Check for OAuth callback
+    if 'code' in st.query_params:
+        code = st.query_params['code']
+        flow.fetch_token(code=code)
+        st.session_state.google_token = flow.credentials.id_token
+        st.query_params.clear()
+
+    if login():
+        # Get user info
+        idinfo = verify_google_token(st.session_state.google_token)
+        user_email = idinfo['email']
+        user_id = generate_user_id(user_email)
         
         # Initialize session state for managing multiple chat sessions
         if 'sessions' not in st.session_state:
@@ -254,9 +354,8 @@ def main():
                 }
             )
             save_user_sessions(user_id, st.session_state.sessions)
-
     else:
-        st.warning("Please enter a username to start chatting.")
+        st.warning("Please log in to use the chat application.")
 
 if __name__=="__main__":
     main()
