@@ -23,7 +23,7 @@ dotenv.load_dotenv()
 
 # Firebase initialization
 if not firebase_admin._apps:
-    firebase_creds = json.loads(st.secrets["FIREBASE_CREDENTIALS"])
+    firebase_creds = st.secrets["FIREBASE_CREDENTIALS"]
     cred = credentials.Certificate(firebase_creds)
     firebase_admin.initialize_app(cred)
 db = firestore.client()
