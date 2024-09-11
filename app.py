@@ -1,4 +1,6 @@
 import sys
+print("Python executable:", sys.executable)
+print("Python path:", sys.path)
 import streamlit as st
 import os
 from PIL import Image
@@ -16,30 +18,23 @@ import logging
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
-import json
 
 logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv()
 
 # Firebase initialization
-firebase_creds = dict(st.secrets["FIREBASE_CREDENTIALS"])
-
-# Ensure the private_key is properly formatted
-firebase_creds['private_key'] = firebase_creds['private_key'].replace('\\n', '\n')
-
 if not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_creds)
+    cred = credentials.Certificate("/etc/secrets/servicefb.json")
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # Set the API key directly in the file (consider using environment variables in production)
-ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
-GOOGLE_CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
-GOOGLE_CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "your_anthropic_api_key_here")
 
-
-# Determine the base URL dynamically
-REDIRECT_URI = "https://lb-chat.streamlit.app/callback"
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+REDIRECT_URI = "http://localhost:8501"  # Update this for production
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
@@ -91,15 +86,12 @@ def is_valid_email(email):
 def login():
     if 'google_token' not in st.session_state:
         auth_url, _ = flow.authorization_url(prompt="consent")
-        
-        # Create a Google login button
         st.markdown(
             f"""
-            <br>
             <a href="{auth_url}" target="_self">
                 <div style="
-                    display: centre-align;
-                    background-color: #6CA394;
+                    display: inline-block;
+                    background-color: #4285F4;
                     color: white;
                     padding: 10px 20px;
                     border-radius: 5px;
@@ -108,14 +100,33 @@ def login():
                     text-align: center;
                     transition: background-color 0.3s;
                 ">
-                    <img src="https://cdn1.iconfinder.com/data/icons/google-s-logo/150/Google_Icons-09-512.png" 
-                         style="vertical-align: middle; height: 24px; margin-right: 10px;" style="text-decoration:none;">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" 
+                         style="vertical-align: middle; height: 24px; margin-right: 10px;">
                     Sign in with Google
                 </div>
             </a>
             """,
+            
             unsafe_allow_html=True
         )
+        return False
+    else:
+        idinfo = verify_google_token(st.session_state.google_token)
+        if idinfo:
+            if 'email' in idinfo:
+                email = idinfo['email']
+                if is_valid_email(email):
+                    st.success(f"Logged in as {email}")
+                    return True
+                else:
+                    st.error(f"Unauthorized email: {email}. Please log in with a valid @upsurge.io account.")
+            else:
+                st.error("Email not found in authentication response. Please ensure you've granted email access permission.")
+        else:
+            st.error("Failed to verify Google authentication token. Please try logging in again.")
+        
+        if 'google_token' in st.session_state:
+            del st.session_state.google_token
         return False
 
 def messages_to_anthropic(messages):
