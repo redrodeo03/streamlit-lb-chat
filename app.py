@@ -39,7 +39,7 @@ GOOGLE_CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
 
 
 # Determine the base URL dynamically
-REDIRECT_URI = "https://lb-chat.streamlit.app/"
+REDIRECT_URI = "https://lb-chat.streamlit.app/callback"
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
