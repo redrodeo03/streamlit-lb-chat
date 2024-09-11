@@ -39,14 +39,7 @@ GOOGLE_CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
 
 
 # Determine the base URL dynamically
-if st.runtime.exists():
-    # We're running in Streamlit Cloud
-    base_url = st.runtime.get_instance().get_base_url()
-else:
-    # We're running locally
-    base_url = "http://localhost:8501"
-
-REDIRECT_URI = f"{base_url}/callback"
+REDIRECT_URI = "https://lb-chat.streamlit.app/"
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
