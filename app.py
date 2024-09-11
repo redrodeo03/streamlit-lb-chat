@@ -22,8 +22,12 @@ logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv()
 
 # Firebase initialization
+firebase_creds = dict(st.secrets["FIREBASE_CREDENTIALS"])
+
+# Ensure the private_key is properly formatted
+firebase_creds['private_key'] = firebase_creds['private_key'].replace('\\n', '\n')
+
 if not firebase_admin._apps:
-    firebase_creds = st.secrets["FIREBASE_CREDENTIALS"]
     cred = credentials.Certificate(firebase_creds)
     firebase_admin.initialize_app(cred)
 db = firestore.client()
