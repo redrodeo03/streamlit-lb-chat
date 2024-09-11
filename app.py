@@ -18,23 +18,22 @@ import logging
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
-
 logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv()
 
 # Firebase initialization
 if not firebase_admin._apps:
-    cred = credentials.Certificate("/etc/secrets/servicefb.json")
+    cred = credentials.Certificate("secrets\servicefb.json")
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # Set the API key directly in the file (consider using environment variables in production)
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "your_anthropic_api_key_here")
+ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
 
 # Google OAuth Configuration
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = "https://upsurge-chat.onrender.com"  # Update this for production
+GOOGLE_CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
+GOOGLE_CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
+REDIRECT_URI = "https://lb-chat.streamlit.app"  # Update this for production
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
@@ -106,7 +105,6 @@ def login():
                 </div>
             </a>
             """,
-            
             unsafe_allow_html=True
         )
         return False
