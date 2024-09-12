@@ -28,11 +28,11 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 # Set the API key directly in the file (consider using environment variables in production)
-ANTHROPIC_API_KEY = os.getenv["ANTHROPIC_API_KEY"]
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # Google OAuth Configuration
-GOOGLE_CLIENT_ID = os.getenv["GOOGLE_CLIENT_ID"]
-GOOGLE_CLIENT_SECRET = os.getenv["GOOGLE_CLIENT_SECRET"]
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = "https://lb-chat.streamlit.app"  # Update this for production
 
 anthropic_models = [
