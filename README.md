@@ -1,3 +1,3 @@
-  buildCommand: pip install -r requirements.txt
-  startCommand: streamlit run app.py
+  buildCommand: pip install -r requirements.txt <br>
+  startCommand: streamlit run app.py <br>
 That's all!
