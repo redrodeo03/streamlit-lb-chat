@@ -41,7 +41,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = "http://localhost:8501"  # Update this for production
+REDIRECT_URI = "https://upsurge-chat.onrender.com"  # Update this for production
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
