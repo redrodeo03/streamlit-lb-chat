@@ -1,6 +1,4 @@
 import sys
-print("Python executable:", sys.executable)
-print("Python path:", sys.path)
 import streamlit as st
 import os
 from PIL import Image
@@ -10,22 +8,32 @@ import anthropic
 import hashlib
 import dotenv
 from google.oauth2 import id_token
-from google.auth import jwt
-import time
 from google.auth.transport import requests
 from google_auth_oauthlib.flow import Flow
 import logging
-import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import firestore
+import sqlite3
+import json
+
 logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv()
 
-# Firebase initialization
-if not firebase_admin._apps:
-    cred = credentials.Certificate("/etc/secrets/servicefb.json")
-    firebase_admin.initialize_app(cred)
-db = firestore.client()
+# SQLite initialization
+def get_db_connection():
+    conn = sqlite3.connect('chat_sessions.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS sessions
+        (user_id TEXT, session_name TEXT, messages TEXT,
+         PRIMARY KEY (user_id, session_name))
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # Set the API key directly in the file (consider using environment variables in production)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -33,7 +41,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = "https://lb-chat.streamlit.app"  # Update this for production
+REDIRECT_URI = "http://localhost:8501"  # Update this for production
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
@@ -43,15 +51,13 @@ anthropic_models = [
 flow = Flow.from_client_config(
     {
         "web": {
-            "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
-            "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
         }
     },
-    scopes=["openid",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile"],
+    scopes=["openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"],
     redirect_uri=REDIRECT_URI,
 )
 
@@ -62,7 +68,7 @@ def verify_google_token(token):
         idinfo = id_token.verify_oauth2_token(
             token, 
             request, 
-            os.environ.get('GOOGLE_CLIENT_ID'),
+            GOOGLE_CLIENT_ID,
             clock_skew_in_seconds=clock_skew_in_seconds
         )
         if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
@@ -87,23 +93,21 @@ def login():
         auth_url, _ = flow.authorization_url(prompt="consent")
         st.markdown(
             f"""
-            <a href="{auth_url}" target="_self">
-                <div style="
-                    display: inline-block;
-                    background-color: #4285F4;
-                    color: white;
-                    padding: 10px 20px;
-                    border-radius: 5px;
-                    text-decoration: none;
-                    font-weight: bold;
-                    text-align: center;
-                    transition: background-color 0.3s;
-                ">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" 
-                         style="vertical-align: middle; height: 24px; margin-right: 10px;">
-                    Sign in with Google
-                </div>
-            </a>
+    <a href="{auth_url}" target="_self" style="
+        display: inline-block;
+        background-color: #6CA395;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 5px;
+        text-decoration: none;
+        font-weight: bold;
+        text-align: center;
+        width: 100%;
+        box-sizing: border-box;
+        font-family: Arial, sans-serif;
+    ">
+        Sign in with Google
+    </a>
             """,
             unsafe_allow_html=True
         )
@@ -164,7 +168,7 @@ def stream_llm_response(model_params, messages):
     with client.messages.stream(
             model="claude-3-5-sonnet-20240620",
             messages=messages_to_anthropic(messages),
-            temperature=model_params["temperature"] if "temperature" in model_params else 0.3,
+            temperature=model_params.get("temperature", 0.3),
             max_tokens=4096,
         ) as stream:
             for text in stream.text_stream:
@@ -179,19 +183,26 @@ def get_image_base64(image_raw):
 def generate_user_id(email):
     return hashlib.md5(email.encode()).hexdigest()
 
-# Load user sessions from Firebase
+# Load user sessions from SQLite
 def load_user_sessions(user_id):
-    sessions = {}
-    docs = db.collection('users').document(user_id).collection('sessions').stream()
-    for doc in docs:
-        sessions[doc.id] = doc.to_dict().get('messages', [])
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT session_name, messages FROM sessions WHERE user_id = ?", (user_id,))
+    sessions = {row['session_name']: json.loads(row['messages']) for row in cursor.fetchall()}
+    conn.close()
     return sessions if sessions else {'default': []}
 
-# Save user sessions to Firebase
+# Save user sessions to SQLite
 def save_user_sessions(user_id, sessions):
-    user_ref = db.collection('users').document(user_id)
+    conn = get_db_connection()
+    cursor = conn.cursor()
     for session_name, messages in sessions.items():
-        user_ref.collection('sessions').document(session_name).set({'messages': messages})
+        cursor.execute('''
+            INSERT OR REPLACE INTO sessions (user_id, session_name, messages)
+            VALUES (?, ?, ?)
+        ''', (user_id, session_name, json.dumps(messages)))
+    conn.commit()
+    conn.close()
 
 def main():
     # --- Page Config ---
@@ -203,7 +214,7 @@ def main():
     )
 
     # --- Header ---
-    st.markdown("""<h1 style="text-align: center; color: #6ca395;">☁️ <i>{{lemmebuild}} chat</h1>""", unsafe_allow_html=True)
+    st.markdown("""<h1 style="text-align: center; color: #6ca395;">☁️ <i>{{upsurge}} chat</h1>""", unsafe_allow_html=True)
 
     # Check for OAuth callback
     if 'code' in st.query_params:
@@ -281,10 +292,27 @@ def main():
             # Image Upload
             st.write("### **🖼️ Add an image:**")
 
-            def add_image_to_messages():
-                if st.session_state.uploaded_img or ("camera_img" in st.session_state and st.session_state.camera_img):
-                    img_type = st.session_state.uploaded_img.type if st.session_state.uploaded_img else "image/jpeg"
-                    raw_img = Image.open(st.session_state.uploaded_img or st.session_state.camera_img)
+            def add_uploaded_image_to_messages():
+                if st.session_state.uploaded_img:
+                    img_type = st.session_state.uploaded_img.type
+                    raw_img = Image.open(st.session_state.uploaded_img)
+                    img = get_image_base64(raw_img)
+                    st.session_state.sessions[st.session_state.current_session].append(
+                        {
+                            "role": "user", 
+                            "content": [{
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{img_type};base64,{img}"}
+                            }]
+                        }
+                    )
+                    save_user_sessions(user_id, st.session_state.sessions)
+                    st.rerun()
+
+            def add_camera_image_to_messages():
+                if st.session_state.camera_img and st.session_state.camera_img is not None:
+                    img_type = "image/jpeg"
+                    raw_img = Image.open(st.session_state.camera_img)
                     img = get_image_base64(raw_img)
                     st.session_state.sessions[st.session_state.current_session].append(
                         {
@@ -307,18 +335,21 @@ def main():
                         type=["png", "jpg", "jpeg"],
                         accept_multiple_files=False,
                         key="uploaded_img",
-                        on_change=add_image_to_messages,
+                        on_change=add_uploaded_image_to_messages,
                     )
 
             with cols_img[1]:                    
                 with st.popover("📸 Camera"):
                     activate_camera = st.checkbox("Activate camera")
                     if activate_camera:
-                        st.camera_input(
+                        camera_image = st.camera_input(
                             "Take a picture", 
                             key="camera_img",
-                            on_change=add_image_to_messages,
                         )
+                        if camera_image:
+                            if st.button("Add camera image to chat"):
+                                add_camera_image_to_messages()
+
 
         # Chat input
         if prompt := st.chat_input("Hi! Ask me anything..."):
@@ -360,8 +391,6 @@ def main():
                 }
             )
             save_user_sessions(user_id, st.session_state.sessions)
-    else:
-        st.warning("Please log in to use the chat application.")
 
 if __name__=="__main__":
     main()
