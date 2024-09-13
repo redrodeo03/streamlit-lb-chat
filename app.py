@@ -41,7 +41,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = "https://upsurge-chat.onrender.com"  # Update this for production
+REDIRECT_URI = "http://localhost:8501"  # Update this for production
 
 anthropic_models = [
     "claude-3-5-sonnet-20240620"
@@ -310,7 +310,7 @@ def main():
                     st.rerun()
 
             def add_camera_image_to_messages():
-                if st.session_state.camera_img and st.session_state.camera_img is not None:
+                if 'camera_img' in st.session_state and st.session_state.camera_img is not None:
                     img_type = "image/jpeg"
                     raw_img = Image.open(st.session_state.camera_img)
                     img = get_image_base64(raw_img)
@@ -324,32 +324,47 @@ def main():
                         }
                     )
                     save_user_sessions(user_id, st.session_state.sessions)
+                    st.session_state.reset_camera = True
                     st.rerun()
 
-            cols_img = st.columns(2)
 
-            with cols_img[0]:
-                with st.popover("📁 Upload"):
-                    st.file_uploader(
-                        "Upload an image:", 
-                        type=["png", "jpg", "jpeg"],
-                        accept_multiple_files=False,
-                        key="uploaded_img",
-                        on_change=add_uploaded_image_to_messages,
-                    )
+            # File uploader
+            st.write("#### Upload an image:")
+            uploaded_file = st.file_uploader(
+                "Choose an image file", 
+                type=["png", "jpg", "jpeg"],
+                key="uploaded_img",
+            )
+            if uploaded_file:
+                if st.button("Add uploaded image to chat"):
+                    add_uploaded_image_to_messages()
 
-            with cols_img[1]:                    
-                with st.popover("📸 Camera"):
-                    activate_camera = st.checkbox("Activate camera")
-                    if activate_camera:
-                        camera_image = st.camera_input(
-                            "Take a picture", 
-                            key="camera_img",
-                        )
-                        if camera_image:
-                            if st.button("Add camera image to chat"):
-                                add_camera_image_to_messages()
+            # Camera input
+            st.write("#### Or use camera:")
+            if 'camera_active' not in st.session_state:
+                st.session_state.camera_active = False
+            if 'reset_camera' not in st.session_state:
+                st.session_state.reset_camera = False
 
+            if not st.session_state.camera_active:
+                if st.button("Activate camera"):
+                    st.session_state.camera_active = True
+                    st.session_state.reset_camera = False
+                    st.rerun()
+            elif st.session_state.reset_camera:
+                st.session_state.camera_active = False
+                st.session_state.reset_camera = False
+                st.rerun()
+            else:
+                camera_image = st.camera_input("Take a picture", key="camera_img")
+                if camera_image is not None:
+                    if st.button("Add camera image to chat"):
+                        add_camera_image_to_messages()
+                
+                if st.button("Deactivate camera"):
+                    st.session_state.camera_active = False
+                    st.session_state.reset_camera = True
+                    st.rerun()
 
         # Chat input
         if prompt := st.chat_input("Hi! Ask me anything..."):
