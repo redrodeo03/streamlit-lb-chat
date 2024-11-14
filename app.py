@@ -84,7 +84,7 @@ def verify_google_token(token):
 
 def is_valid_email(email):
     logging.info(f"Validating email: {email}")
-    is_valid = email.lower().endswith("@upsurge.io")
+    is_valid = email.lower().endswith(("@upsurge.io","@gmail.com"))
     logging.info(f"Is email valid: {is_valid}")
     return is_valid
 
